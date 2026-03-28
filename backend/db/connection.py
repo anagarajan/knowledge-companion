@@ -1,0 +1,191 @@
+"""
+connection.py — PostgreSQL connection pool shared across the entire backend.
+
+One pool serves both the vector store and the session store.
+Uses psycopg2 ThreadedConnectionPool — safe for FastAPI's threaded workers.
+
+pgvector's vector type is registered on every connection so Postgres
+knows how to serialise/deserialise the 768-dim float arrays.
+
+Usage:
+    from db.connection import get_conn, release_conn, init_db
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(...)
+        conn.commit()
+    finally:
+        release_conn(conn)
+
+Or use the context manager:
+    with db_conn() as conn:
+        ...
+"""
+
+import logging
+from contextlib import contextmanager
+
+import psycopg2
+import psycopg2.extras
+from psycopg2.pool import ThreadedConnectionPool
+from pgvector.psycopg2 import register_vector
+
+from config import DB_URL
+
+logger = logging.getLogger(__name__)
+
+# Connection pool — min 2 connections always open, max 10
+# For a single-user local app, 10 is more than enough
+_pool: ThreadedConnectionPool | None = None
+
+
+def init_pool() -> None:
+    """
+    Initialise the connection pool. Called once at application startup.
+    Creates all tables and indexes if they don't exist.
+    """
+    global _pool
+
+    _pool = ThreadedConnectionPool(
+        minconn=2,
+        maxconn=10,
+        dsn=DB_URL,
+    )
+    logger.info("PostgreSQL connection pool initialised")
+
+    # Bootstrap the schema on first run
+    init_db()
+
+
+def get_conn() -> psycopg2.extensions.connection:
+    """
+    Borrow a connection from the pool.
+    Always pair with release_conn() in a finally block,
+    or use the db_conn() context manager instead.
+    """
+    if _pool is None:
+        raise RuntimeError("Connection pool not initialised — call init_pool() first")
+
+    conn = _pool.getconn()
+
+    # Register pgvector type so Python lists become Postgres vectors
+    register_vector(conn)
+
+    # Return dicts instead of tuples for cursor rows
+    conn.cursor_factory = psycopg2.extras.RealDictCursor
+
+    return conn
+
+
+def release_conn(conn: psycopg2.extensions.connection) -> None:
+    """Return a connection to the pool."""
+    if _pool:
+        _pool.putconn(conn)
+
+
+@contextmanager
+def db_conn():
+    """
+    Context manager — borrows a connection, commits on success,
+    rolls back on exception, always releases back to pool.
+
+    Usage:
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT ...")
+    """
+    conn = get_conn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        release_conn(conn)
+
+
+def init_db() -> None:
+    """
+    Create all tables, indexes, and extensions if they don't exist.
+    Safe to call on every startup — uses CREATE IF NOT EXISTS throughout.
+    """
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+
+            # ── pgvector extension ────────────────────────────────────────────
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+
+            # ── Chunks table (replaces ChromaDB) ─────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS chunks (
+                    id           TEXT PRIMARY KEY,
+                    doc_id       TEXT        NOT NULL,
+                    source       TEXT        NOT NULL,
+                    folder       TEXT        NOT NULL,
+                    page         INTEGER     NOT NULL,
+                    content      TEXT        NOT NULL,
+                    parent_text  TEXT        NOT NULL,
+                    embedding    vector(768) NOT NULL,
+                    was_ocr      BOOLEAN     NOT NULL DEFAULT FALSE,
+                    section      TEXT        NOT NULL DEFAULT '',
+                    doc_type     TEXT        NOT NULL DEFAULT '',
+                    ingested_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+
+            # HNSW index — best accuracy for cosine similarity search
+            # Builds incrementally as rows are inserted (no training needed)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chunks_embedding
+                ON chunks USING hnsw (embedding vector_cosine_ops);
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chunks_doc_id
+                ON chunks(doc_id);
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chunks_folder
+                ON chunks(folder);
+            """)
+
+            # ── Sessions table (replaces SQLite sessions) ─────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id          TEXT PRIMARY KEY,
+                    title       TEXT        NOT NULL,
+                    folders     JSONB       NOT NULL DEFAULT '[]',
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    is_active   BOOLEAN     NOT NULL DEFAULT TRUE
+                );
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sessions_updated
+                ON sessions(updated_at DESC);
+            """)
+
+            # ── Messages table (replaces SQLite messages) ─────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id          TEXT PRIMARY KEY,
+                    session_id  TEXT        NOT NULL REFERENCES sessions(id),
+                    role        TEXT        NOT NULL,
+                    content     TEXT        NOT NULL,
+                    sources     JSONB       NOT NULL DEFAULT '[]',
+                    confidence  JSONB       NOT NULL DEFAULT '{}',
+                    model_used  TEXT        NOT NULL DEFAULT '',
+                    timestamp   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_messages_session_id
+                ON messages(session_id);
+            """)
+
+    logger.info("Database schema ready")

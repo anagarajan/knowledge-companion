@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Frontend build
+frontend/dist/
+
+# Logs & runtime state
+logs/
+*.log
+.pids/
+
+# Ingestion state (machine-specific paths)
+backend/ingestion_log.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / tools
+.vscode/
+.idea/
+.claude/
+
+# Documents (user data, not source code)
+documents/
+
+# Env files
+.env
+.env.*
+
+# Memory / planning files
+project_knowledge_companion.md
