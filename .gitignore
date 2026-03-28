@@ -45,5 +45,6 @@ documents/
 .env
 .env.*
 
-# Memory / planning files
+# Local-only notes
 project_knowledge_companion.md
+LEARNINGS.md
