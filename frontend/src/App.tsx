@@ -6,19 +6,27 @@
  *   - activeSessionId  (which conversation is open)
  *   - availableFolders (discovered from the documents/ directory)
  *   - selectedFolders  (which folders the current session searches)
+ *   - sidebarOpen      (collapsed / expanded)
+ *   - sidebarWidth     (drag-resizable, 180–480px)
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
 import type { Session } from './types'
 import * as api from './lib/api'
+
+const SIDEBAR_MIN = 180
+const SIDEBAR_MAX = 480
+const SIDEBAR_DEFAULT = 256
 
 export default function App() {
   const [sessions,         setSessions]         = useState<Session[]>([])
   const [activeId,         setActiveId]         = useState<string | null>(null)
   const [availableFolders, setAvailableFolders] = useState<string[]>([])
   const [selectedFolders,  setSelectedFolders]  = useState<string[]>([])
+  const [sidebarOpen,      setSidebarOpen]      = useState(true)
+  const [sidebarWidth,     setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
 
   // ── Bootstrap on first load ────────────────────────────────────────────────
 
@@ -38,6 +46,30 @@ export default function App() {
     const session = sessions.find(s => s.id === activeId)
     if (session) setSelectedFolders(session.folders)
   }, [activeId, sessions])
+
+  // ── Sidebar resize drag ────────────────────────────────────────────────────
+
+  const isDragging = useRef(false)
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    isDragging.current = true
+    e.preventDefault()
+  }, [])
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, e.clientX)))
+    }
+    const onMouseUp = () => { isDragging.current = false }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
 
   // ── Session actions ────────────────────────────────────────────────────────
 
@@ -100,7 +132,19 @@ export default function App() {
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
         onFolderToggle={handleFolderToggle}
+        isOpen={sidebarOpen}
+        width={sidebarWidth}
+        onToggle={() => setSidebarOpen(prev => !prev)}
       />
+
+      {/* ── Resize handle — only when sidebar is open ─────────────────────── */}
+      {sidebarOpen && (
+        <div
+          onMouseDown={handleResizeMouseDown}
+          className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-black/20 transition-colors"
+          title="Drag to resize"
+        />
+      )}
 
       <main className="flex-1 overflow-hidden">
         {activeId ? (

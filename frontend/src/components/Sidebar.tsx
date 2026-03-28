@@ -2,12 +2,15 @@
  * Sidebar.tsx — Left navigation panel.
  *
  * Three sections:
- *   1. Header + New Chat button
+ *   1. Header + hamburger toggle + New Chat button
  *   2. Folder scope picker (checkboxes — which folders this session searches)
  *   3. Conversation history list
+ *
+ * When collapsed (isOpen=false): renders a 48px strip with just the hamburger.
+ * When open: renders at the width passed from App (drag-resizable).
  */
 
-import { Trash2, Plus, FolderOpen, MessageSquare } from 'lucide-react'
+import { Trash2, Plus, FolderOpen, MessageSquare, Menu } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Session } from '../types'
 
@@ -16,10 +19,13 @@ interface Props {
   activeId:         string | null
   availableFolders: string[]
   selectedFolders:  string[]
+  isOpen:           boolean
+  width:            number
   onNewChat:        () => void
   onSelectSession:  (id: string) => void
   onDeleteSession:  (id: string) => void
   onFolderToggle:   (folder: string, checked: boolean) => void
+  onToggle:         () => void
 }
 
 export default function Sidebar({
@@ -27,19 +33,49 @@ export default function Sidebar({
   activeId,
   availableFolders,
   selectedFolders,
+  isOpen,
+  width,
   onNewChat,
   onSelectSession,
   onDeleteSession,
   onFolderToggle,
+  onToggle,
 }: Props) {
+
+  // ── Collapsed strip ───────────────────────────────────────────────────────
+  if (!isOpen) {
+    return (
+      <aside className="flex flex-col items-center h-full bg-sidebar border-r border-border shrink-0" style={{ width: 48 }}>
+        <button
+          onClick={onToggle}
+          className="mt-4 p-2 rounded-lg text-muted hover:text-black hover:bg-raised transition-colors"
+          title="Expand sidebar"
+        >
+          <Menu size={18} />
+        </button>
+      </aside>
+    )
+  }
+
+  // ── Expanded sidebar ──────────────────────────────────────────────────────
   return (
-    <aside className="flex flex-col w-64 h-full bg-sidebar border-r border-border shrink-0">
+    <aside
+      className="flex flex-col h-full bg-sidebar border-r border-border shrink-0 overflow-hidden"
+      style={{ width }}
+    >
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="px-4 pt-5 pb-3 border-b border-border">
-        <p className="text-sm font-semibold tracking-widest uppercase text-muted select-none">
+      <div className="flex items-center justify-between px-4 pt-5 pb-3 border-b border-border">
+        <p className="text-sm font-semibold tracking-widest uppercase text-muted select-none truncate">
           Knowledge Companion
         </p>
+        <button
+          onClick={onToggle}
+          className="ml-2 p-1.5 rounded-lg text-muted hover:text-black hover:bg-raised transition-colors shrink-0"
+          title="Collapse sidebar"
+        >
+          <Menu size={16} />
+        </button>
       </div>
 
       {/* ── New Chat button ─────────────────────────────────────────────────── */}
