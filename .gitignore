@@ -36,6 +36,7 @@ Thumbs.db
 .vscode/
 .idea/
 .claude/
+CLAUDE.md
 
 # Documents (user data, not source code)
 documents/
