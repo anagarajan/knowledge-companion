@@ -131,7 +131,13 @@ class Retriever:
         logger.info(f"Best re-rank score: {best_score:.2f}")
 
         # ── Stage 2b: Apply threshold ─────────────────────────────────────────
-        if best_score < SCORE_THRESHOLD:
+        # If keyword search found exact matches, relax the threshold slightly —
+        # the re-ranker (3b) may not recognise synonym gaps like "types" vs
+        # "techniques" but the keyword lane confirms the document is relevant.
+        keyword_ids = {r.chunk_id for r in keyword_results}
+        effective_threshold = SCORE_THRESHOLD * 0.8 if keyword_ids else SCORE_THRESHOLD
+
+        if best_score < effective_threshold:
             logger.info("Best score below threshold — no relevant documents")
             return RetrievalResult(
                 results=[],
@@ -147,7 +153,6 @@ class Retriever:
         # Ensure at least one keyword-matched chunk is in the final context
         # if it scored above threshold, even if it fell below FINAL_TOP_K.
         top_results = [result for result, _ in ranked[:FINAL_TOP_K]]
-        keyword_ids = {r.chunk_id for r in keyword_results}
 
         if keyword_ids:
             kw_in_top = any(r.chunk_id in keyword_ids for r in top_results)

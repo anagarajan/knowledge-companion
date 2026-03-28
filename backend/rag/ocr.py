@@ -33,6 +33,7 @@ def extract_text_from_pdf(pdf_path: str) -> list[PageContent]:
     """
     Open a PDF and return text for every page.
     Automatically detects scanned pages and applies OCR.
+    Tables are extracted as structured markdown to preserve column order.
     """
     pages: list[PageContent] = []
 
@@ -62,10 +63,18 @@ def extract_text_from_pdf(pdf_path: str) -> list[PageContent]:
         )
 
         if len(clean_text) >= MIN_TEXT_CHARS and not _is_garbled(clean_text) and not heavy_garble:
-            # Enough clean text found — this is a native text page
+            # Enough clean text found — this is a native text page.
+            # Try to extract any tables as structured markdown — this preserves
+            # column order and tick/cross characters that flat text extraction loses.
+            table_md = _extract_tables_as_markdown(page)
+            if table_md:
+                final_text = clean_text + "\n\n" + table_md
+                logger.info(f"  Page {page_number}: structured table(s) extracted")
+            else:
+                final_text = clean_text
             pages.append(PageContent(
                 page_number=page_number,
-                text=clean_text,
+                text=final_text,
                 was_ocr=False,
             ))
         else:
@@ -95,6 +104,64 @@ def extract_text_from_pdf(pdf_path: str) -> list[PageContent]:
     )
 
     return pages
+
+
+def _extract_tables_as_markdown(page: fitz.Page) -> str | None:
+    """
+    Use PyMuPDF's built-in table detector to extract tables as markdown.
+
+    This preserves column order and special characters (✓ ✗) that are lost
+    when reading table content as a flat text stream.  Returns None if no
+    tables are found or extraction fails.
+    """
+    try:
+        tabs = page.find_tables()
+        if not tabs.tables:
+            return None
+
+        md_tables = []
+        for table in tabs.tables:
+            rows = table.extract()
+            if not rows or len(rows) < 2:
+                continue
+
+            md_rows = []
+            for i, row in enumerate(rows):
+                cells = [_normalise_cell(cell) for cell in row]
+                md_rows.append("| " + " | ".join(cells) + " |")
+                if i == 0:
+                    md_rows.append("| " + " | ".join(["---"] * len(cells)) + " |")
+
+            md_tables.append("\n".join(md_rows))
+
+        return "\n\n".join(md_tables) if md_tables else None
+    except Exception as e:
+        logger.debug(f"Table extraction skipped: {e}")
+        return None
+
+
+def _normalise_cell(cell: object) -> str:
+    """Normalise a table cell value for markdown output."""
+    if cell is None:
+        return ""
+    text = str(cell).strip()
+    text = _normalise_tick_cross(text)
+    # Escape pipe so markdown table structure is not broken
+    return text.replace("|", "\\|")
+
+
+def _normalise_tick_cross(text: str) -> str:
+    """
+    Map common OCR / font-encoding misreads of ✓ and ✗ to proper Unicode.
+    Only applies when the entire cell content is a single tick or cross symbol —
+    this avoids corrupting words that legitimately contain 'v' or 'x'.
+    """
+    stripped = text.strip()
+    if stripped in {"v", "V", "y", "Y", "J", "√", "\u2713", "\u2714", "✓"}:
+        return "✓"
+    if stripped in {"x", "X", "×", "\u2717", "\u2718", "✗", "✕"}:
+        return "✗"
+    return text
 
 
 def _ocr_page(page: fitz.Page, dpi: int = 300) -> str:

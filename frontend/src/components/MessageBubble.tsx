@@ -7,7 +7,21 @@
 
 import { clsx } from 'clsx'
 import { FileText, Cpu } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { Message } from '../types'
+
+/** Normalise LLM output to clean markdown before rendering.
+ *  Small models often use • or · as bullets instead of markdown `- `.
+ *  This converts them so ReactMarkdown renders proper <ul> lists. */
+function normaliseMarkdown(text: string): string {
+  return text
+    // • or · at start of line → markdown list item
+    .replace(/^[•·]\s*/gm, '- ')
+    // inline • separating items on same line → split onto new lines
+    .replace(/\s[•·]\s/g, '\n- ')
+}
+
 
 interface Props {
   message: Message
@@ -29,15 +43,31 @@ export default function MessageBubble({ message }: Props) {
   return (
     <div className="flex flex-col gap-3 max-w-[85%]">
 
-      {/* Answer text */}
+      {/* Answer text — rendered as markdown */}
       <div
         className={clsx(
-          'text-sm text-black leading-relaxed whitespace-pre-wrap',
+          'prose prose-sm max-w-none text-black',
+          // Tune the prose defaults to match the app's design tokens
+          'prose-headings:font-semibold prose-headings:text-black',
+          'prose-strong:text-black prose-strong:font-semibold',
+          'prose-em:text-black',
+          'prose-code:text-black prose-code:bg-raised prose-code:rounded prose-code:px-1 prose-code:py-0.5 prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none',
+          'prose-pre:bg-raised prose-pre:border prose-pre:border-border prose-pre:rounded-lg prose-pre:text-xs',
+          'prose-table:text-sm prose-th:text-left prose-th:font-semibold prose-th:text-black prose-td:text-black',
+          'prose-thead:border-border prose-tr:border-border',
+          'prose-a:text-black prose-a:underline',
+          'prose-li:text-black prose-ul:my-1 prose-ol:my-1',
+          'prose-p:my-1 prose-p:leading-relaxed',
+          'prose-blockquote:border-l-border prose-blockquote:text-muted',
+          // Streaming states
           message.isStreaming && !message.content && 'text-muted italic',
           message.isStreaming && message.content && 'streaming-cursor',
         )}
       >
-        {message.content || (message.isStreaming ? 'Thinking…' : '')}
+        {message.isStreaming && !message.content
+          ? <p className="text-muted italic not-prose">Thinking…</p>
+          : <ReactMarkdown remarkPlugins={[remarkGfm]}>{normaliseMarkdown(message.content)}</ReactMarkdown>
+        }
       </div>
 
       {/* Source cards — shown after streaming completes */}
