@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
+import EntityBrowser from './components/EntityBrowser'
 import type { Session } from './types'
 import * as api from './lib/api'
 
@@ -27,6 +28,7 @@ export default function App() {
   const [selectedFolders,  setSelectedFolders]  = useState<string[]>([])
   const [sidebarOpen,      setSidebarOpen]      = useState(true)
   const [sidebarWidth,     setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
+  const [activeView,       setActiveView]       = useState<'chat' | 'graph'>('chat')
 
   // ── Bootstrap on first load ────────────────────────────────────────────────
 
@@ -134,7 +136,9 @@ export default function App() {
         onFolderToggle={handleFolderToggle}
         isOpen={sidebarOpen}
         width={sidebarWidth}
+        activeView={activeView}
         onToggle={() => setSidebarOpen(prev => !prev)}
+        onViewChange={setActiveView}
       />
 
       {/* ── Resize handle — only when sidebar is open ─────────────────────── */}
@@ -147,7 +151,9 @@ export default function App() {
       )}
 
       <main className="flex-1 overflow-hidden">
-        {activeId ? (
+        {activeView === 'graph' ? (
+          <EntityBrowser />
+        ) : activeId ? (
           <ChatArea
             key={activeId}
             sessionId={activeId}

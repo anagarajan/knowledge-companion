@@ -133,6 +133,39 @@ def classify_complexity(question: str) -> str:
     return "COMPLEX" if "COMPLEX" in result else "SIMPLE"
 
 
+def classify_graph_relevance(question: str) -> bool:
+    """
+    Should this question use the knowledge graph?
+
+    Returns True for relational/comparative questions:
+      - "Which policy supersedes X?"        → YES (relationship traversal)
+      - "What department does X apply to?"  → YES (entity connection)
+      - "Compare old and new versions"      → YES (document comparison)
+
+    Returns False for simple fact lookups:
+      - "What is the notice period?"        → NO (single chunk answer)
+      - "How do I submit expenses?"         → NO (procedural lookup)
+
+    Why an LLM call instead of keyword heuristics?
+      Heuristics catch "compare" and "supersede" but miss questions like
+      "What department is responsible for data protection?" which is
+      clearly relational but uses no obvious keywords.
+    """
+    prompt = (
+        "Does this question ask about relationships between entities, "
+        "comparisons between documents, policy versions, who authored or "
+        "approved something, which department something applies to, or "
+        "what supersedes/replaces what?\n\n"
+        f"Question: {question}\n\n"
+        "Reply with one word only — YES or NO."
+    )
+    try:
+        result = generate_worker(prompt).strip().upper()
+        return "YES" in result
+    except Exception:
+        return False  # safe default — skip graph, use normal retrieval
+
+
 def generate_hyde(question: str) -> str:
     """
     Generate a Hypothetical Document Excerpt (HyDE) for a question.

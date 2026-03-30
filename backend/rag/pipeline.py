@@ -17,14 +17,18 @@ import logging
 from collections.abc import Generator
 from dataclasses import dataclass, field
 
+from config import GRAPH_EXTRACTION_ENABLED
 from models.ollama import (
     classify_complexity,
+    classify_graph_relevance,
     stream_worker,
     stream_reasoner,
 )
 from rag.hyde import expand_query, expand_query_multi
 from rag.retriever import Retriever, RetrievalResult
 from rag.vectorstore import VectorStore, SearchResult
+from rag.graph_store import GraphStore
+from rag.graph_retriever import GraphRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +100,14 @@ class Pipeline:
     Thread-safe — each call to query() is independent.
     """
 
-    def __init__(self, vector_store: VectorStore):
+    def __init__(self, vector_store: VectorStore, graph_store: GraphStore | None = None):
         self._retriever = Retriever(vector_store)
+        # Graph retriever is optional — None if graph is disabled or not set up.
+        # The optional param keeps backward compatibility: existing code that
+        # passes only vector_store still works.
+        self._graph_retriever: GraphRetriever | None = None
+        if graph_store and GRAPH_EXTRACTION_ENABLED:
+            self._graph_retriever = GraphRetriever(graph_store, vector_store)
 
     def query(
         self,
@@ -156,6 +166,41 @@ class Pipeline:
             folders=folders,
         )
 
+        # ── Step 4b-d: Graph-augmented retrieval ─────────────────────────────
+        # Three safety layers:
+        #   1. Feature flag (GRAPH_EXTRACTION_ENABLED)
+        #   2. Classification gate (only relational questions)
+        #   3. Try/except (any failure → fall through to normal retrieval)
+        graph_context = ""
+        if self._graph_retriever and retrieval.results:
+            try:
+                if classify_graph_relevance(question):
+                    logger.info("Graph-relevant question — running graph retrieval")
+                    graph_result = self._graph_retriever.retrieve(
+                        question=question,
+                        seed_results=retrieval.results,
+                        folders=folders,
+                    )
+                    if graph_result.is_graph_enhanced:
+                        graph_context = graph_result.graph_context
+
+                        # Merge graph chunks into retrieval results.
+                        # They enter the existing result list and will be
+                        # subject to the same threshold gate and diversity
+                        # filtering as vector/BM25 results.
+                        if graph_result.graph_chunks:
+                            retrieval = self._merge_graph_results(
+                                retrieval, graph_result.graph_chunks,
+                            )
+                            logger.info(
+                                f"  Merged {len(graph_result.graph_chunks)} "
+                                f"graph chunks into results"
+                            )
+                else:
+                    logger.info("Non-relational question — skipping graph")
+            except Exception as e:
+                logger.warning(f"Graph retrieval failed (non-critical): {e}")
+
         # ── Step 5: Threshold gate — stop if nothing relevant ─────────────────
         if retrieval.below_threshold or not retrieval.results:
             logger.info("Below threshold — returning fallback")
@@ -185,7 +230,9 @@ class Pipeline:
         confidence = _score_based_confidence(diverse_results)
 
         # ── Step 8: Build prompt ──────────────────────────────────────────────
-        system_prompt = _build_system_prompt(diverse_results, retrieval.has_conflict)
+        system_prompt = _build_system_prompt(
+            diverse_results, retrieval.has_conflict, graph_context,
+        )
         messages = _build_messages(question, history)
 
         # ── Step 9: Select model and stream answer — tokens flow in real time ──
@@ -210,11 +257,51 @@ class Pipeline:
         )
 
 
+    @staticmethod
+    def _merge_graph_results(
+        retrieval: RetrievalResult,
+        graph_chunks: list[SearchResult],
+    ) -> RetrievalResult:
+        """
+        Merge graph-discovered chunks into the existing retrieval results.
+
+        Why not replace?  Graph chunks are supplementary.  The vector/BM25
+        results are already high-quality candidates.  Graph chunks add
+        context from related documents — they should compete alongside
+        existing results, not replace them.
+
+        Deduplicates by chunk_id — if vector search and graph traversal
+        found the same chunk, keep the vector version (it has a real
+        re-rank score, not a graph distance score).
+        """
+        existing_ids = {r.chunk_id for r in retrieval.results}
+
+        new_chunks = [
+            c for c in graph_chunks
+            if c.chunk_id not in existing_ids
+        ]
+
+        merged = list(retrieval.results) + new_chunks
+
+        # Update best_score if graph chunks improved it
+        all_scores = [r.score for r in merged if r.score > 0]
+        best = max(all_scores) if all_scores else retrieval.best_score
+
+        return RetrievalResult(
+            results=merged,
+            has_conflict=retrieval.has_conflict,
+            best_score=best,
+            below_threshold=retrieval.below_threshold,
+            keyword_chunk_ids=retrieval.keyword_chunk_ids,
+        )
+
+
 # ── Prompt construction ───────────────────────────────────────────────────────
 
 def _build_system_prompt(
     results: list[SearchResult],
     has_conflict: bool,
+    graph_context: str = "",
 ) -> str:
     """
     Build the full system prompt including retrieved context chunks.
@@ -244,7 +331,14 @@ def _build_system_prompt(
         if has_conflict else ""
     )
 
-    return f"{SYSTEM_PROMPT}{conflict_note}\n\n=== DOCUMENT CONTEXT ===\n\n{context}"
+    # Graph context goes between rules and document chunks.
+    # It tells the LLM about entity relationships that span documents —
+    # information it can't infer from individual chunks alone.
+    graph_section = ""
+    if graph_context:
+        graph_section = f"\n\n=== ENTITY RELATIONSHIPS ===\n\n{graph_context}"
+
+    return f"{SYSTEM_PROMPT}{conflict_note}{graph_section}\n\n=== DOCUMENT CONTEXT ===\n\n{context}"
 
 
 def _build_messages(question: str, history: list[dict]) -> list[dict]:

@@ -3,7 +3,7 @@
  * Streaming (SSE) is handled separately in hooks/useChat.ts.
  */
 
-import type { ApiMessage, Session } from '../types'
+import type { ApiMessage, Session, GraphEntity, GraphRelationship, GraphStats } from '../types'
 
 const BASE = '/api'
 
@@ -57,4 +57,41 @@ export function getMessages(sessionId: string): Promise<ApiMessage[]> {
 
 export function listFolders(): Promise<string[]> {
   return request<string[]>('/folders')
+}
+
+// ── Knowledge Graph ──────────────────────────────────────────────────────────
+
+export function listEntities(params: {
+  search?: string
+  type?: string
+  folder?: string
+  limit?: number
+  offset?: number
+} = {}): Promise<GraphEntity[]> {
+  const query = new URLSearchParams()
+  if (params.search) query.set('search', params.search)
+  if (params.type)   query.set('type', params.type)
+  if (params.folder) query.set('folder', params.folder)
+  if (params.limit)  query.set('limit', String(params.limit))
+  if (params.offset) query.set('offset', String(params.offset))
+  const qs = query.toString()
+  return request<GraphEntity[]>(`/graph/entities${qs ? `?${qs}` : ''}`)
+}
+
+export function getEntity(id: string): Promise<{
+  entity: GraphEntity
+  relationships: GraphRelationship[]
+}> {
+  return request(`/graph/entities/${id}`)
+}
+
+export function getRelatedEntities(
+  id: string,
+  depth = 2,
+): Promise<GraphEntity[]> {
+  return request<GraphEntity[]>(`/graph/entities/${id}/related?depth=${depth}`)
+}
+
+export function getGraphStats(): Promise<GraphStats> {
+  return request<GraphStats>('/graph/stats')
 }

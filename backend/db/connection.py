@@ -188,4 +188,73 @@ def init_db() -> None:
                 ON messages(session_id);
             """)
 
+            # ── Knowledge Graph: Entities ────────────────────────────────────
+            # Each row is a "noun" extracted from a document chunk:
+            # a person, policy, department, date, etc.
+            # The LLM reads each chunk during ingestion and pulls these out.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS entities (
+                    id              TEXT PRIMARY KEY,
+                    name            TEXT        NOT NULL,
+                    name_normalized TEXT        NOT NULL,
+                    entity_type     TEXT        NOT NULL,
+                    doc_id          TEXT        NOT NULL,
+                    source          TEXT        NOT NULL,
+                    folder          TEXT        NOT NULL,
+                    chunk_id        TEXT        NOT NULL,
+                    page            INTEGER     NOT NULL,
+                    description     TEXT        NOT NULL DEFAULT '',
+                    properties      JSONB       NOT NULL DEFAULT '{}',
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_name_normalized ON entities(name_normalized);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_doc_id ON entities(doc_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_entities_folder ON entities(folder);")
+
+            # ── Knowledge Graph: Relationships ───────────────────────────────
+            # Each row is a directed edge: entity A --[relation]--> entity B
+            # e.g. "Leave Policy v3" --SUPERSEDES--> "Leave Policy v2"
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS relationships (
+                    id                TEXT PRIMARY KEY,
+                    source_entity_id  TEXT        NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                    target_entity_id  TEXT        NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                    relation_type     TEXT        NOT NULL,
+                    description       TEXT        NOT NULL DEFAULT '',
+                    confidence        REAL        NOT NULL DEFAULT 0.5,
+                    doc_id            TEXT        NOT NULL,
+                    chunk_id          TEXT        NOT NULL,
+                    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(source_entity_id, target_entity_id, relation_type)
+                );
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_entity_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_entity_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rel_type ON relationships(relation_type);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_rel_doc_id ON relationships(doc_id);")
+
+            # ── Knowledge Graph: Document Metadata ───────────────────────────
+            # One row per ingested PDF — title, type, version, summary.
+            # Supersession links connect versions of the same document.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS document_metadata (
+                    doc_id          TEXT PRIMARY KEY,
+                    source          TEXT        NOT NULL,
+                    folder          TEXT        NOT NULL,
+                    title           TEXT        NOT NULL DEFAULT '',
+                    doc_type        TEXT        NOT NULL DEFAULT '',
+                    version         TEXT        NOT NULL DEFAULT '',
+                    effective_date  TEXT        NOT NULL DEFAULT '',
+                    superseded_by   TEXT        DEFAULT NULL,
+                    supersedes      TEXT        DEFAULT NULL,
+                    summary         TEXT        NOT NULL DEFAULT '',
+                    entity_count    INTEGER     NOT NULL DEFAULT 0,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+
     logger.info("Database schema ready")

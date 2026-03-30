@@ -33,6 +33,41 @@ export interface ApiMessage {
   timestamp:  string
 }
 
+// ── Knowledge Graph types ──────────────────────────────────────────────────────
+
+export interface GraphEntity {
+  id:              string
+  name:            string
+  name_normalized: string
+  entity_type:     string
+  source:          string
+  folder:          string
+  page:            number
+  description:     string
+  properties:      Record<string, unknown>
+}
+
+export interface GraphRelationship {
+  id:               string
+  source_entity_id: string
+  target_entity_id: string
+  relation_type:    string
+  description:      string
+  confidence:       number
+  source_name?:     string   // resolved name (from GET /entities/{id})
+  source_type?:     string
+  target_name?:     string
+  target_type?:     string
+}
+
+export interface GraphStats {
+  total_entities:               number
+  total_relationships:          number
+  total_documents_with_metadata: number
+  entities_by_type:             Record<string, number>
+  relationships_by_type:        Record<string, number>
+}
+
 // ── Local UI types ─────────────────────────────────────────────────────────────
 
 /** Message as held in React state — before and after it's persisted. */

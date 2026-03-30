@@ -47,3 +47,25 @@ PARENT_CHUNK_SIZE    = 2000
 PARENT_CHUNK_OVERLAP = 200
 CHILD_CHUNK_SIZE     = 400
 CHILD_CHUNK_OVERLAP  = 40
+
+# ── Knowledge Graph ──────────────────────────────────────────────────────────
+
+GRAPH_EXTRACTION_ENABLED = True   # kill switch — set False to skip entirely
+
+# Fixed vocabulary forces the 3b model to categorize consistently.
+# Free-form extraction with small models produces chaos ("THING", "CONCEPT", etc.)
+GRAPH_ENTITY_TYPES = [
+    "PERSON", "POLICY", "DEPARTMENT", "DATE", "AMOUNT",
+    "DOCUMENT", "ORGANIZATION", "ROLE", "LOCATION", "OTHER",
+]
+
+GRAPH_RELATION_TYPES = [
+    "SUPERSEDES", "REFERENCES", "APPLIES_TO", "AUTHORED_BY",
+    "BELONGS_TO", "GOVERNS", "REQUIRES", "CONFLICTS_WITH", "RELATED_TO",
+]
+
+GRAPH_MAX_ENTITIES_PER_CHUNK  = 10   # cap per parent chunk
+GRAPH_MAX_RELS_PER_CHUNK      = 15
+GRAPH_EXTRACTION_BATCH_SIZE   = 5    # parent chunks per LLM call
+GRAPH_TRAVERSAL_MAX_DEPTH     = 3    # hops in recursive CTE
+GRAPH_TRAVERSAL_MAX_NODES     = 50   # total nodes returned from traversal

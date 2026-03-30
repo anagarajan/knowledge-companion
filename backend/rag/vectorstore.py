@@ -225,6 +225,48 @@ class VectorStore:
             for row in rows
         ]
 
+    def get_chunks_by_ids(self, chunk_ids: list[str]) -> list[SearchResult]:
+        """
+        Load full SearchResult objects for a list of chunk IDs.
+
+        Used by the graph retriever: graph traversal discovers chunk IDs
+        that are related to the query, but the pipeline needs full
+        SearchResult objects (text, source, page, etc.) to include them
+        in the LLM context.
+
+        Score is set to 0.0 — the graph retriever assigns its own scores
+        based on graph distance.  These chunks compete on merit through
+        re-ranking, not on a pre-assigned score.
+        """
+        if not chunk_ids:
+            return []
+
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, source, folder, page, content, parent_text, was_ocr
+                    FROM chunks
+                    WHERE id = ANY(%s)
+                    """,
+                    (chunk_ids,),
+                )
+                rows = cur.fetchall()
+
+        return [
+            SearchResult(
+                chunk_id=row["id"],
+                source=row["source"],
+                folder=row["folder"],
+                page=row["page"],
+                child_text=row["content"],
+                parent_text=row["parent_text"],
+                score=0.0,
+                was_ocr=row["was_ocr"],
+            )
+            for row in rows
+        ]
+
     def doc_exists(self, doc_id: str) -> bool:
         """Check if any chunk from this document is already stored."""
         with db_conn() as conn:

@@ -8,7 +8,7 @@ export default defineConfig({
     // This means the frontend never has to worry about CORS in dev mode.
     proxy: {
       '/api': {
-        target: 'http://localhost:8001',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       },
     },

@@ -10,7 +10,7 @@
  * When open: renders at the width passed from App (drag-resizable).
  */
 
-import { Trash2, Plus, FolderOpen, MessageSquare, Menu } from 'lucide-react'
+import { Trash2, Plus, FolderOpen, MessageSquare, Menu, Network } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Session } from '../types'
 
@@ -21,11 +21,13 @@ interface Props {
   selectedFolders:  string[]
   isOpen:           boolean
   width:            number
+  activeView:       'chat' | 'graph'
   onNewChat:        () => void
   onSelectSession:  (id: string) => void
   onDeleteSession:  (id: string) => void
   onFolderToggle:   (folder: string, checked: boolean) => void
   onToggle:         () => void
+  onViewChange:     (view: 'chat' | 'graph') => void
 }
 
 export default function Sidebar({
@@ -35,11 +37,13 @@ export default function Sidebar({
   selectedFolders,
   isOpen,
   width,
+  activeView,
   onNewChat,
   onSelectSession,
   onDeleteSession,
   onFolderToggle,
   onToggle,
+  onViewChange,
 }: Props) {
 
   // ── Collapsed strip ───────────────────────────────────────────────────────
@@ -87,6 +91,34 @@ export default function Sidebar({
         >
           <Plus size={15} />
           New chat
+        </button>
+      </div>
+
+      {/* ── View switcher (Chat / Graph) ──────────────────────────────────── */}
+      <div className="flex gap-1 px-3 pt-3">
+        <button
+          onClick={() => onViewChange('chat')}
+          className={clsx(
+            'flex items-center gap-1.5 flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+            activeView === 'chat'
+              ? 'bg-raised text-black'
+              : 'text-muted hover:text-black hover:bg-raised/50',
+          )}
+        >
+          <MessageSquare size={12} />
+          Chat
+        </button>
+        <button
+          onClick={() => onViewChange('graph')}
+          className={clsx(
+            'flex items-center gap-1.5 flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+            activeView === 'graph'
+              ? 'bg-raised text-black'
+              : 'text-muted hover:text-black hover:bg-raised/50',
+          )}
+        >
+          <Network size={12} />
+          Graph
         </button>
       </div>
 

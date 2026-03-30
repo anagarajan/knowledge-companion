@@ -28,10 +28,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import DOCUMENTS_DIR
-from db.connection import init_pool
+from db.connection import db_conn, init_pool
 from db.sessions import SessionStore
 from rag.pipeline import Pipeline
 from rag.vectorstore import VectorStore
+from rag.graph_store import GraphStore
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -58,6 +59,7 @@ app.add_middleware(
 _vector_store: VectorStore | None = None
 _pipeline: Pipeline | None = None
 _session_store: SessionStore | None = None
+_graph_store: GraphStore | None = None
 
 
 @app.on_event("startup")
@@ -68,17 +70,20 @@ def startup() -> None:
     2. Creates/migrates all tables (idempotent).
     3. Instantiates the shared VectorStore, Pipeline, and SessionStore.
     """
-    global _vector_store, _pipeline, _session_store
+    global _vector_store, _pipeline, _session_store, _graph_store
 
     logger.info("Starting Knowledge Companion API...")
     init_pool()                           # opens the Postgres pool, creates tables
 
     _vector_store = VectorStore()
-    _pipeline = Pipeline(_vector_store)
+    _graph_store = GraphStore()
+    _pipeline = Pipeline(_vector_store, _graph_store)
     _session_store = SessionStore()
 
     logger.info(
-        f"Ready — {_vector_store.count()} chunks indexed"
+        f"Ready — {_vector_store.count()} chunks, "
+        f"{_graph_store.entity_count()} entities, "
+        f"{_graph_store.relationship_count()} relationships"
     )
 
 
@@ -333,6 +338,194 @@ def health() -> dict:
     return {
         "status": "ok",
         "chunks_indexed": vs.count() if vs else 0,
+    }
+
+
+# ── Knowledge Graph endpoints ────────────────────────────────────────────────
+#
+# These endpoints expose the graph for inspection and debugging.
+# They're also used by the frontend's EntityBrowser component (Phase 4).
+#
+# Why separate from the chat endpoint?
+#   The chat endpoint streams answers.  These return structured data
+#   for browsing entities, relationships, and graph statistics.
+#   Different consumers, different response shapes.
+
+def get_graph_store() -> GraphStore:
+    if _graph_store is None:
+        raise RuntimeError("GraphStore not initialised")
+    return _graph_store
+
+
+@app.get("/api/graph/entities")
+def list_entities(
+    search: str | None = None,
+    type: str | None = None,
+    folder: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    """
+    Search and filter entities in the knowledge graph.
+
+    Query params:
+      search  — substring match on entity name (case-insensitive)
+      type    — filter by entity type (PERSON, POLICY, DEPARTMENT, etc.)
+      folder  — filter by source folder
+      limit   — max results (default 50)
+      offset  — pagination offset
+    """
+    gs = get_graph_store()
+
+    if search:
+        results = gs.find_entities_by_name(
+            name=search,
+            entity_type=type,
+            folders=[folder] if folder else None,
+        )
+    elif type:
+        results = gs.find_entities_by_type(
+            entity_type=type,
+            folders=[folder] if folder else None,
+        )
+    else:
+        # No filter — return all entities (paginated)
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                if folder:
+                    cur.execute(
+                        "SELECT * FROM entities WHERE folder = %s ORDER BY name LIMIT %s OFFSET %s",
+                        (folder, limit, offset),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM entities ORDER BY name LIMIT %s OFFSET %s",
+                        (limit, offset),
+                    )
+                results = cur.fetchall()
+
+    return [dict(r) for r in results]
+
+
+@app.get("/api/graph/entities/{entity_id}")
+def get_entity(entity_id: str) -> dict:
+    """
+    Get one entity with all its relationships (both incoming and outgoing).
+
+    Returns the entity plus a list of relationships with connected
+    entity names resolved — so the frontend doesn't need extra calls.
+    """
+    gs = get_graph_store()
+
+    # Find the entity itself
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM entities WHERE id = %s", (entity_id,))
+            entity = cur.fetchone()
+
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    # Find all relationships involving this entity
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT r.*,
+                       se.name AS source_name, se.entity_type AS source_type,
+                       te.name AS target_name, te.entity_type AS target_type
+                FROM relationships r
+                JOIN entities se ON se.id = r.source_entity_id
+                JOIN entities te ON te.id = r.target_entity_id
+                WHERE r.source_entity_id = %s OR r.target_entity_id = %s
+            """, (entity_id, entity_id))
+            relationships = cur.fetchall()
+
+    return {
+        "entity": dict(entity),
+        "relationships": [dict(r) for r in relationships],
+    }
+
+
+@app.get("/api/graph/entities/{entity_id}/related")
+def get_related_entities(
+    entity_id: str,
+    depth: int = 2,
+    max_nodes: int = 30,
+) -> list[dict]:
+    """
+    Traverse the graph from an entity.
+
+    This uses the recursive CTE — walks outgoing AND incoming edges
+    up to `depth` hops.  Returns connected entities with their
+    relationship type and distance.
+
+    Example: starting from "Leave Policy v3" at depth 2:
+      depth 1: Engineering (APPLIES_TO), Sarah Chen (AUTHORED_BY)
+      depth 2: Engineering Handbook (REFERENCES), HR Department (BELONGS_TO)
+    """
+    gs = get_graph_store()
+    # Cap depth at 3 to prevent expensive traversals
+    depth = min(depth, 3)
+    return gs.get_related_entities(entity_id, max_depth=depth, max_nodes=max_nodes)
+
+
+@app.get("/api/graph/documents/{doc_id}/metadata")
+def get_doc_metadata(doc_id: str) -> dict:
+    """Get the metadata summary for a document (title, type, version, summary)."""
+    gs = get_graph_store()
+    meta = gs.get_document_metadata(doc_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Document metadata not found")
+    return dict(meta)
+
+
+@app.get("/api/graph/documents/{doc_id}/entities")
+def get_doc_entities(doc_id: str) -> list[dict]:
+    """List all entities extracted from a specific document."""
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM entities WHERE doc_id = %s ORDER BY entity_type, name",
+                (doc_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+@app.get("/api/graph/stats")
+def graph_stats() -> dict:
+    """
+    Graph-wide statistics — useful for verifying ingestion quality.
+
+    After ingesting a batch of documents, hit this endpoint to confirm:
+    - entities were extracted (total > 0)
+    - types are distributed (not everything is OTHER)
+    - relationships exist (connections were found)
+    """
+    gs = get_graph_store()
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT entity_type, COUNT(*) AS count
+                FROM entities GROUP BY entity_type ORDER BY count DESC
+            """)
+            entities_by_type = {r["entity_type"]: r["count"] for r in cur.fetchall()}
+
+            cur.execute("""
+                SELECT relation_type, COUNT(*) AS count
+                FROM relationships GROUP BY relation_type ORDER BY count DESC
+            """)
+            rels_by_type = {r["relation_type"]: r["count"] for r in cur.fetchall()}
+
+            cur.execute("SELECT COUNT(*) AS count FROM document_metadata")
+            doc_count = cur.fetchone()["count"]
+
+    return {
+        "total_entities": gs.entity_count(),
+        "total_relationships": gs.relationship_count(),
+        "total_documents_with_metadata": doc_count,
+        "entities_by_type": entities_by_type,
+        "relationships_by_type": rels_by_type,
     }
 
 
