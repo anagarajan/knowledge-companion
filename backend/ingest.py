@@ -2,10 +2,13 @@
 ingest.py — Document ingestion CLI
 
 Usage:
-  python ingest.py                          # process all new PDFs in documents/
-  python ingest.py --folder path/to/folder  # process a specific folder
-  python ingest.py --force file.pdf         # re-ingest a specific file
-  python ingest.py --remove file.pdf        # remove a file from the knowledge base
+  python ingest.py --folder /any/path/to/folder   # ingest PDFs from any folder on disk
+  python ingest.py --folder ~/Documents/Legal      # absolute or relative paths both work
+  python ingest.py --force file.pdf                # re-ingest a specific file
+  python ingest.py --remove file.pdf               # remove a file from the knowledge base
+
+The --folder flag accepts any directory on your system — PDFs are not
+limited to the project's documents/ folder.
 
 Coordinates: ocr.py -> chunker.py -> ollama embeddings -> vectorstore.py
 """
@@ -30,7 +33,6 @@ from rag.graph_store import GraphStore
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DOCUMENTS_DIR   = Path(__file__).parent.parent / "documents"
 INGESTION_LOG   = Path(__file__).parent / "ingestion_log.json"
 OLLAMA_BASE_URL = "http://localhost:11434"
 EMBED_MODEL     = "nomic-embed-text"
@@ -49,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="Knowledge Companion — Document Ingestion")
-    parser.add_argument("--folder", type=str, default=None,   help="Process a specific folder")
+    parser.add_argument("--folder", type=str, default=None,   help="Folder to ingest PDFs from (any path on disk)")
     parser.add_argument("--force",  type=str, default=None,   help="Re-ingest a specific PDF (filename)")
     parser.add_argument("--remove", type=str, default=None,   help="Remove a PDF from the knowledge base")
     args = parser.parse_args()
@@ -65,7 +67,11 @@ def main():
         return
 
     # ── Collect PDFs to process ───────────────────────────────────────────────
-    search_root = Path(args.folder) if args.folder else DOCUMENTS_DIR
+    if not args.folder:
+        logger.error("Please specify a folder: python ingest.py --folder /path/to/pdfs")
+        sys.exit(1)
+
+    search_root = Path(args.folder).expanduser().resolve()
     if not search_root.exists():
         logger.error(f"Folder not found: {search_root}")
         sys.exit(1)

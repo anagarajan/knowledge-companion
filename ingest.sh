@@ -3,13 +3,17 @@
 # ingest.sh — Add a folder of PDFs to the knowledge base
 #
 # Usage:
-#   ./ingest.sh <folder-name>            — ingest documents/<folder-name>
-#   ./ingest.sh <folder-name> --force    — re-ingest even if already stored
-#   ./ingest.sh <folder-name> --remove   — remove from knowledge base
+#   ./ingest.sh /path/to/any/folder          — ingest PDFs from any folder
+#   ./ingest.sh ~/Desktop/Legal              — home directory paths work too
+#   ./ingest.sh /path/to/folder --force      — re-ingest even if already stored
+#   ./ingest.sh --remove filename.pdf        — remove a file from knowledge base
+#
+# The folder can be anywhere on your system — not limited to documents/.
 #
 # Examples:
-#   ./ingest.sh HR
-#   ./ingest.sh Legal --force
+#   ./ingest.sh ~/Documents/HR
+#   ./ingest.sh /Users/me/Desktop/Policies --force
+#   ./ingest.sh --remove "Annual Leave Policy.pdf"
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -21,20 +25,29 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
 die() { echo -e "${RED}✘  $*${NC}"; exit 1; }
 ok()  { echo -e "${GREEN}✔${NC}  $*"; }
 
-[[ -z "${1:-}" ]] && die "Usage: ./ingest.sh <folder-name> [--force] [--remove]"
+[[ -z "${1:-}" ]] && die "Usage: ./ingest.sh /path/to/folder [--force]  or  ./ingest.sh --remove filename.pdf"
 
+[[ -f "$VENV/bin/activate" ]] || die "Backend not set up. Run ./start.sh first."
+
+# ── Remove mode ──────────────────────────────────────────────────────────────
+if [[ "$1" == "--remove" ]]; then
+  [[ -z "${2:-}" ]] && die "Usage: ./ingest.sh --remove filename.pdf"
+  cd "$ROOT/backend"
+  "$VENV/bin/python" ingest.py --remove "$2"
+  ok "Done."
+  exit 0
+fi
+
+# ── Ingest mode ──────────────────────────────────────────────────────────────
 FOLDER="$1"
 shift
 EXTRA_ARGS="$*"
 
-FOLDER_PATH="$ROOT/documents/$FOLDER"
+# Expand ~ and resolve to absolute path
+FOLDER_PATH="$(cd "$FOLDER" 2>/dev/null && pwd)" \
+  || die "Folder not found: $FOLDER"
 
 [[ -d "$FOLDER_PATH" ]] || die "Folder not found: $FOLDER_PATH"
-[[ -f "$VENV/bin/activate" ]] || die "Backend not set up. Run ./start.sh first."
-
-# Require the backend to be running (it means Postgres is up too)
-curl -s http://localhost:8001/api/health &>/dev/null \
-  || die "Backend is not running. Start the app first with: ./start.sh"
 
 echo ""
 echo "  Ingesting: $FOLDER_PATH"
@@ -43,5 +56,6 @@ echo "  ────────────────────────
 cd "$ROOT/backend"
 "$VENV/bin/python" ingest.py --folder "$FOLDER_PATH" $EXTRA_ARGS
 
-ok "Done. Open the app and select the '$FOLDER' folder to search it."
+FOLDER_NAME="$(basename "$FOLDER_PATH")"
+ok "Done. Open the app and select '$FOLDER_NAME' in the sidebar to search it."
 echo ""

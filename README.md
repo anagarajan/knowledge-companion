@@ -6,16 +6,7 @@ Built for Apple Silicon Mac. All AI runs locally via Ollama.
 
 ---
 
-## Requirements
-
-- macOS (Apple Silicon or Intel)
-- Internet connection on first run (to download dependencies and AI models)
-
-Everything else — PostgreSQL, Ollama, Python, Node.js — is installed automatically.
-
----
-
-## Start
+## Quick Start
 
 ```bash
 git clone <this-repo>
@@ -23,30 +14,111 @@ cd knowledge-companion
 ./start.sh
 ```
 
-That's it. First run takes 10–15 minutes (downloading AI models). Every run after that starts in seconds.
+First run takes 10–15 minutes (downloads and installs everything automatically). Every run after starts in seconds.
 
-The app opens automatically at **http://localhost:5173**
+The app opens at **http://localhost:5173**
 
----
+### What gets installed automatically
 
-## Add documents
+- **PostgreSQL 16** + pgvector (vector database)
+- **Ollama** + 3 AI models (embedding, fast worker, reasoner)
+- **Python 3.12** + virtual environment with all dependencies
+- **Node.js** + frontend packages
 
-Drop PDFs into a folder inside `documents/`, then run:
-
-```bash
-./ingest.sh <folder-name>
-```
-
-Example — if you created `documents/HR/`:
-```bash
-./ingest.sh HR
-```
-
-Then select the **HR** folder in the app's sidebar to search it.
+No manual setup required — `./start.sh` handles everything.
 
 ---
 
-## Stop
+## Adding Documents
+
+Ingest PDFs from **any folder on your system** — they don't need to be inside the project directory.
+
+### Using the ingest script (recommended)
+
+Make sure the app is running (`./start.sh`), then:
+
+```bash
+./ingest.sh /path/to/any/folder
+```
+
+Examples:
+```bash
+# Ingest from anywhere on disk
+./ingest.sh ~/Documents/HR
+./ingest.sh /Users/me/Desktop/Legal
+./ingest.sh ~/Dropbox/Company-Policies
+
+# Re-ingest a folder (updates existing documents)
+./ingest.sh ~/Documents/HR --force
+
+# Remove a specific file from the knowledge base
+./ingest.sh --remove "Annual Leave Policy.pdf"
+```
+
+The folder name (e.g. `HR`, `Legal`) appears in the app's sidebar. Select it to search those documents.
+
+### Using Python directly (manual setup)
+
+If you're running the backend yourself instead of using `./start.sh`, you must use the project's virtual environment. Bare `python3` will fail with `ModuleNotFoundError` because the dependencies are installed in the venv, not system-wide.
+
+**Option A — Activate the venv first:**
+
+```bash
+cd backend
+source .venv/bin/activate
+python ingest.py --folder /path/to/any/folder
+```
+
+**Option B — Call the venv Python directly (no activation needed):**
+
+```bash
+cd backend
+.venv/bin/python ingest.py --folder /path/to/any/folder
+```
+
+Both options are equivalent. Option B is useful for one-off commands or scripts.
+
+**Common mistake:**
+```bash
+# This will NOT work — system Python doesn't have the project's packages
+python3 ingest.py --folder ~/Documents/HR
+# → ModuleNotFoundError: No module named 'psycopg2'
+
+# This WILL work
+.venv/bin/python ingest.py --folder ~/Documents/HR
+```
+
+### Setting up the venv from scratch
+
+If you cloned the repo without running `./start.sh`:
+
+```bash
+cd backend
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+Then use `.venv/bin/python` for all commands.
+
+### Starting the backend manually
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn main:app --reload --port 8000
+```
+
+Or without activation:
+```bash
+cd backend
+.venv/bin/uvicorn main:app --reload --port 8000
+```
+
+> **Note:** `./start.sh` runs the backend on port 8001. When running manually with `--port 8000`, update `frontend/vite.config.ts` proxy target to match.
+
+---
+
+## Stopping the App
 
 ```bash
 ./start.sh --stop
@@ -64,11 +136,20 @@ logs/ollama.log     — Ollama AI runtime
 
 ---
 
-## How it works
+## How It Works
 
-1. **Ingest** — PDFs are split into chunks, embedded as vectors, and stored in PostgreSQL
-2. **Ask** — Your question is expanded via AI, searched using both semantic and keyword search, and re-ranked
-3. **Answer** — The best matching chunks are sent to a local LLM which answers using only your documents
-4. **Cite** — Every answer shows which document and page it came from
+1. **Ingest** — PDFs are split into chunks, embedded as vectors, and stored in PostgreSQL. A knowledge graph extracts entities and relationships for structural queries.
+2. **Ask** — Your question is expanded via AI, searched using semantic search, keyword search, and graph traversal, then re-ranked.
+3. **Answer** — The best matching chunks are sent to a local LLM which answers using only your documents.
+4. **Cite** — Every answer shows which document and page it came from.
 
-All answers come only from your documents. The system is explicitly designed to say "I could not find this" rather than guess.
+All answers come only from your documents. The system is designed to say "I could not find this" rather than guess.
+
+---
+
+## Requirements
+
+- macOS (Apple Silicon or Intel)
+- Internet connection on first run (to download dependencies and AI models)
+
+Everything else is installed automatically by `./start.sh`.

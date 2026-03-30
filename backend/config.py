@@ -4,7 +4,6 @@ All environment-driven settings live here.
 """
 
 import os
-from pathlib import Path
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
@@ -22,10 +21,6 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 EMBED_MODEL     = "nomic-embed-text"
 WORKER_MODEL    = "llama3.2:3b"
 REASONER_MODEL  = "llama3.1:8b"
-
-# ── Documents ─────────────────────────────────────────────────────────────────
-
-DOCUMENTS_DIR = Path(__file__).parent.parent / "documents"
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 

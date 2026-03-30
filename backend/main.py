@@ -20,14 +20,11 @@ import json
 import logging
 import os
 from collections.abc import AsyncGenerator
-from pathlib import Path
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from config import DOCUMENTS_DIR
 from db.connection import db_conn, init_pool
 from db.sessions import SessionStore
 from rag.pipeline import Pipeline
@@ -313,20 +310,14 @@ def update_folders(session_id: str, req: UpdateFoldersRequest) -> dict:
 @app.get("/api/folders")
 def list_folders() -> list[str]:
     """
-    Return all top-level folder names inside the documents/ directory.
-    The UI uses this to populate the folder-scope picker.
-    Returns folder names relative to documents/ (e.g. ["HR", "Legal", "Finance"]).
+    Return all folder names that have been ingested into the knowledge base.
+    Queries distinct folder values from the chunks table — works regardless
+    of where the source PDFs lived on disk.
     """
-    docs_dir = Path(DOCUMENTS_DIR)
-    if not docs_dir.exists():
-        return []
-
-    folders = sorted(
-        entry.name
-        for entry in docs_dir.iterdir()
-        if entry.is_dir() and not entry.name.startswith(".")
-    )
-    return folders
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT folder FROM chunks ORDER BY folder")
+            return [row["folder"] for row in cur.fetchall()]
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
