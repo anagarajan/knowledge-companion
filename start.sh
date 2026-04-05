@@ -235,55 +235,58 @@ head "6/6  Starting the app"
 
 # Kill any leftover processes from a previous run — use port-based kill
 # so stale processes that lost their PID file are also cleaned up
-lsof -ti :8001 | xargs kill -9 2>/dev/null || true
-lsof -ti :5173 | xargs kill -9 2>/dev/null || true
+lsof -ti :8000 | xargs kill -9 2>/dev/null || true
+lsof -ti :5457 | xargs kill -9 2>/dev/null || true
 rm -f "$PID_DIR/backend.pid" "$PID_DIR/frontend.pid"
 sleep 1
 
 # Start FastAPI backend
-info "Starting backend (port 8001)..."
+info "Starting backend (port 8000)..."
 cd "$ROOT/backend"
-"$VENV/bin/uvicorn" main:app --port 8001 --log-level warning \
+"$VENV/bin/uvicorn" main:app --port 8000 --log-level warning \
   >"$LOG_DIR/backend.log" 2>&1 &
 echo $! > "$PID_DIR/backend.pid"
 cd "$ROOT"
 
 # Wait for backend to be ready
 for i in {1..15}; do
-  curl -s http://localhost:8001/api/health &>/dev/null && break
+  curl -s http://localhost:8000/api/health &>/dev/null && break
   sleep 1
 done
-curl -s http://localhost:8001/api/health &>/dev/null || die "Backend failed to start. Check logs/backend.log"
-ok "Backend running at http://localhost:8001"
+curl -s http://localhost:8000/api/health &>/dev/null || die "Backend failed to start. Check logs/backend.log"
+ok "Backend running at http://localhost:8000"
 
 # Start React frontend
-info "Starting frontend (port 5173)..."
+info "Starting frontend (port 5457)..."
 npm run dev --prefix "$ROOT/frontend" \
   >"$LOG_DIR/frontend.log" 2>&1 &
 echo $! > "$PID_DIR/frontend.pid"
 
 # Wait for frontend
 for i in {1..20}; do
-  curl -s http://localhost:5173 &>/dev/null && break
+  curl -s http://localhost:5457 &>/dev/null && break
   sleep 1
 done
 
-ok "Frontend running at http://localhost:5173"
+ok "Frontend running at http://localhost:5457"
 
 # Open browser automatically
 sleep 1
-open "http://localhost:5173" 2>/dev/null || true
+open "http://localhost:5457" 2>/dev/null || true
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}  Knowledge Companion is running!${NC}"
 echo "  ────────────────────────────────────────────────────────────"
-echo "  App:      http://localhost:5173"
-echo "  API:      http://localhost:8001"
+echo "  App:      http://localhost:5457"
+echo "  API:      http://localhost:8000"
 echo "  Logs:     ./logs/backend.log  ./logs/frontend.log"
 echo ""
 echo "  To ingest documents:"
 echo "    ./ingest.sh /path/to/any/folder"
+echo ""
+echo "  To re-ingest after changing entity/relation types in config.py:"
+echo "    ./ingest.sh /path/to/any/folder --force"
 echo ""
 echo "  To stop:  ./start.sh --stop"
 echo "  ────────────────────────────────────────────────────────────"

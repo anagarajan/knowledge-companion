@@ -29,18 +29,36 @@ export default function App() {
   const [sidebarOpen,      setSidebarOpen]      = useState(true)
   const [sidebarWidth,     setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
   const [activeView,       setActiveView]       = useState<'chat' | 'graph'>('chat')
+  const [loading,          setLoading]          = useState(true)
 
   // ── Bootstrap on first load ────────────────────────────────────────────────
 
   useEffect(() => {
-    Promise.all([api.listFolders(), api.listSessions()]).then(([folders, sessions]) => {
-      setAvailableFolders(folders)
-      setSessions(sessions)
-      if (sessions.length > 0) {
-        setActiveId(sessions[0].id)
-        setSelectedFolders(sessions[0].folders)
+    let cancelled = false
+
+    async function loadWithRetry(retries = 15, delay = 1000) {
+      for (let i = 0; i < retries; i++) {
+        try {
+          const [folders, sessions] = await Promise.all([api.listFolders(), api.listSessions()])
+          if (cancelled) return
+          setAvailableFolders(folders)
+          setSessions(sessions)
+          if (sessions.length > 0) {
+            setActiveId(sessions[0].id)
+            setSelectedFolders(sessions[0].folders)
+          }
+          setLoading(false)
+          return
+        } catch {
+          if (cancelled) return
+          await new Promise(r => setTimeout(r, delay))
+        }
       }
-    })
+      if (!cancelled) setLoading(false)
+    }
+
+    loadWithRetry()
+    return () => { cancelled = true }
   }, [])
 
   // Sync selected folders whenever the active session changes
@@ -122,6 +140,17 @@ export default function App() {
   }, [])
 
   // ── Render ────────────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-surface">
+        <div className="flex flex-col items-center gap-4 text-muted select-none">
+          <div className="w-8 h-8 border-2 border-muted border-t-black rounded-full animate-spin" />
+          <p className="text-sm tracking-wide">Connecting to Knowledge Companion...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen bg-surface text-black overflow-hidden">
