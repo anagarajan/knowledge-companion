@@ -16,7 +16,7 @@ cd knowledge-companion
 
 First run takes 10–15 minutes (downloads and installs everything automatically). Every run after starts in seconds.
 
-The app opens at **http://localhost:5173**
+The app opens at **http://localhost:5457**
 
 ### What gets installed automatically
 
@@ -114,7 +114,24 @@ cd backend
 .venv/bin/uvicorn main:app --reload --port 8000
 ```
 
-> **Note:** `./start.sh` runs the backend on port 8001. When running manually with `--port 8000`, update `frontend/vite.config.ts` proxy target to match.
+---
+
+## Updating
+
+When a new version is available, just run:
+
+```bash
+./update.sh
+```
+
+This handles everything automatically:
+- Stops the running app
+- Pulls the latest code
+- Reinstalls Python/Node dependencies (only if they changed)
+- Shows what's new from the changelog
+- Restarts the app
+
+No manual steps needed.
 
 ---
 
