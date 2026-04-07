@@ -28,6 +28,9 @@ logs/
 # Ingestion state (machine-specific paths)
 backend/ingestion_log.json
 
+# OCR cache (rebuildable, can be huge)
+backend/ocr_cache/
+
 # OS
 .DS_Store
 Thumbs.db

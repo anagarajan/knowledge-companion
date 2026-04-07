@@ -28,6 +28,29 @@ EMBED_BATCH_SIZE = 32     # chunks per Ollama embedding call
 MIN_TEXT_CHARS   = 50     # below this → treat page as scanned
 OCR_DPI          = 300    # render DPI for scanned pages
 
+# ── OCR ───────────────────────────────────────────────────────────────────────
+
+OCR_ENGINE              = "tesseract"   # "tesseract" — only engine wired today.
+                                        # Future: "paddle" | "doctr" | "surya"
+OCR_CACHE_ENABLED       = True          # Cache OCR results by file hash so
+                                        # re-ingestion never re-OCRs the same file
+OCR_CACHE_DIR           = "ocr_cache"   # Created under backend/ if missing
+OCR_PARALLEL_PAGES      = True          # OCR multiple pages of one PDF in parallel
+OCR_MAX_WORKERS         = 4             # Thread pool size for page-level parallelism
+OCR_PREPROCESS          = True          # Grayscale + autocontrast + binarize
+OCR_TESSERACT_PSM       = 6             # Page segmentation mode 6 = uniform block,
+                                        # works better for medical forms than auto
+OCR_LOW_CONFIDENCE_THRESHOLD = 60.0     # Pages below this mean confidence get
+                                        # logged to logs/ocr_low_confidence.log
+OCR_LOW_CONFIDENCE_LOG  = "logs/ocr_low_confidence.log"
+
+# ── Patient extraction (Track 1) ─────────────────────────────────────────────
+
+PATIENT_EXTRACTION_ENABLED   = True
+PATIENT_EXTRACTION_MODEL     = "llama3.1:8b"   # Accuracy > speed for medical
+PATIENT_EXTRACTION_MAX_CHARS = 30000           # Truncate huge patients
+PATIENT_EXTRACTION_TIMEOUT_S = 120             # Per-patient hard cap
+
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 
 SEMANTIC_TOP_K  = 20      # candidates from pgvector search

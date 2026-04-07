@@ -46,7 +46,7 @@ app = FastAPI(title="Knowledge Companion API", version="1.0.0")
 # Allow the React dev server (port 5173) and the production build to call us
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["http://localhost:5457", "http://localhost:5173", "http://localhost:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -318,6 +318,32 @@ def list_folders() -> list[str]:
         with conn.cursor() as cur:
             cur.execute("SELECT DISTINCT folder FROM chunks ORDER BY folder")
             return [row["folder"] for row in cur.fetchall()]
+
+
+# ── Patient validation endpoints (Track 1) ───────────────────────────────────
+#
+# Read-only endpoints so Noctrix can verify extraction quality without UI.
+# Use during ingestion to spot-check records and find systemic gaps.
+
+
+@app.get("/api/patients/stats")
+def patients_stats() -> dict:
+    """
+    Field completeness across all extracted patients. Use this to answer
+    questions like "we extracted DOB for 47,832 / 50,000 patients".
+    """
+    from rag.patient_store import patient_stats
+    return patient_stats()
+
+
+@app.get("/api/patients/{patient_id}")
+def get_patient_endpoint(patient_id: str) -> dict:
+    """Full patient record + provenance (which file each field came from)."""
+    from rag.patient_store import get_patient
+    patient = get_patient(patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return patient
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

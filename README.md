@@ -57,6 +57,35 @@ Examples:
 
 The folder name (e.g. `HR`, `Legal`) appears in the app's sidebar. Select it to search those documents.
 
+### Ingesting patient records (healthcare mode)
+
+For folders containing one subfolder per patient (each with their own scanned
+PDFs of intake forms, labs, prescriptions, etc.), use `--type patient`:
+
+```bash
+./ingest.sh /path/to/patients --type patient
+```
+
+This enables:
+- **Forced OCR** on every page (scanned medical PDFs often have unreliable
+  embedded text — page numbers and headers only)
+- **Structured extraction** of name, DOB, gender, city, state, insurance,
+  ICD-10 codes, diagnoses, and medications into the `patients` table
+- **Provenance tracking** — every extracted field links back to the
+  source file and page
+
+Useful flags during testing:
+```bash
+./ingest.sh /path/to/patients --type patient --no-extract   # chunks only, fast
+./ingest.sh /path/to/patients --type patient --extract-only # re-run extraction
+```
+
+Verify the results without a UI:
+```bash
+curl http://localhost:8000/api/patients/stats              # field completeness
+curl http://localhost:8000/api/patients/<patient_id>       # full record + provenance
+```
+
 ### Using Python directly (manual setup)
 
 If you're running the backend yourself instead of using `./start.sh`, you must use the project's virtual environment. Bare `python3` will fail with `ModuleNotFoundError` because the dependencies are installed in the venv, not system-wide.

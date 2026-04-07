@@ -240,6 +240,75 @@ def init_db() -> None:
             # ── Knowledge Graph: Document Metadata ───────────────────────────
             # One row per ingested PDF — title, type, version, summary.
             # Supersession links connect versions of the same document.
+            # ── Folders: tracks ingest type (patient | policy | general) ─────
+            # Knowing whether a folder is a patient folder lets the ingest
+            # pipeline route documents through the patient extractor and
+            # force OCR for scanned medical PDFs.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS folders (
+                    name        TEXT PRIMARY KEY,
+                    path        TEXT        NOT NULL,
+                    folder_type TEXT        NOT NULL DEFAULT 'general',
+                    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+
+            # ── Patients: one row per patient (Track 1 — structured layer) ──
+            # Patient_id is the folder name when it looks like an ID, otherwise
+            # synthesized from extracted name + DOB. JSONB arrays for multi-valued
+            # medical fields are indexed with GIN so "patients with Metformin"
+            # is a fast indexed query, not a table scan.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS patients (
+                    patient_id          TEXT PRIMARY KEY,
+                    folder_path         TEXT        NOT NULL,
+                    patient_id_source   TEXT        NOT NULL DEFAULT 'folder_name',
+                    full_name           TEXT,
+                    date_of_birth       DATE,
+                    gender              TEXT,
+                    city                TEXT,
+                    state               TEXT,
+                    insurance_provider  TEXT,
+                    insurance_id        TEXT,
+                    icd10_codes         JSONB       NOT NULL DEFAULT '[]',
+                    diagnoses           JSONB       NOT NULL DEFAULT '[]',
+                    medications         JSONB       NOT NULL DEFAULT '[]',
+                    medical_history     TEXT        NOT NULL DEFAULT '',
+                    last_extracted_at   TIMESTAMPTZ,
+                    source_doc_hash     TEXT,
+                    extraction_model    TEXT        NOT NULL DEFAULT '',
+                    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_patients_dob ON patients(date_of_birth);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_patients_state_city ON patients(state, city);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_patients_gender ON patients(gender);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_patients_insurance ON patients(insurance_provider);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_patients_icd10 ON patients USING GIN (icd10_codes);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_patients_diagnoses ON patients USING GIN (diagnoses);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_patients_medications ON patients USING GIN (medications);")
+
+            # ── Patient field provenance ─────────────────────────────────────
+            # Every extracted field links back to its source document and page.
+            # Powers "DOB: 1958-03-12 (from intake.pdf, p2)" in the UI and lets
+            # the query layer skip low-confidence values.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS patient_field_provenance (
+                    id              SERIAL PRIMARY KEY,
+                    patient_id      TEXT        NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
+                    field_name      TEXT        NOT NULL,
+                    field_value     TEXT        NOT NULL,
+                    source_file     TEXT        NOT NULL,
+                    source_page     INTEGER,
+                    confidence      REAL        NOT NULL DEFAULT 0.0,
+                    extracted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_provenance_patient ON patient_field_provenance(patient_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_provenance_field ON patient_field_provenance(field_name);")
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS document_metadata (
                     doc_id          TEXT PRIMARY KEY,
