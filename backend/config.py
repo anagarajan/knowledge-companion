@@ -51,6 +51,13 @@ PATIENT_EXTRACTION_MODEL     = "llama3.1:8b"   # Accuracy > speed for medical
 PATIENT_EXTRACTION_MAX_CHARS = 30000           # Truncate huge patients
 PATIENT_EXTRACTION_TIMEOUT_S = 120             # Per-patient hard cap
 
+# ── Query routing (Track 2) ──────────────────────────────────────────────────
+
+QUERY_ROUTING_ENABLED    = True    # kill switch — set False to skip intent
+                                   # classification and always use RAG
+PATIENT_QUERY_MAX_ROWS   = 100    # cap rows returned by patient SQL queries
+PATIENT_QUERY_TIMEOUT_MS = 5000   # per-query statement_timeout (milliseconds)
+
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 
 SEMANTIC_TOP_K  = 20      # candidates from pgvector search

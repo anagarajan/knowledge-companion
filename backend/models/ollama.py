@@ -109,6 +109,32 @@ def stream_reasoner(
     yield from _stream_chat(REASONER_MODEL, system_prompt, messages)
 
 
+# ── JSON generation ──────────────────────────────────────────────────────────
+
+def generate_worker_json(prompt: str) -> dict:
+    """
+    Run a prompt through llama3.2:3b with format=json enforced.
+    Returns the parsed dict. Raises ValueError on parse failure.
+    """
+    response = _post(
+        "/api/generate",
+        {
+            "model":   WORKER_MODEL,
+            "prompt":  prompt,
+            "stream":  False,
+            "format":  "json",
+            "options": GENERATION_OPTIONS,
+        },
+        timeout=GENERATE_TIMEOUT,
+    )
+    raw = response.get("response", "")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parse failed: {e}\nRaw: {raw[:500]}")
+        raise ValueError(f"Model returned invalid JSON: {raw[:200]}") from e
+
+
 # ── Structured helpers ────────────────────────────────────────────────────────
 
 def classify_complexity(question: str) -> str:

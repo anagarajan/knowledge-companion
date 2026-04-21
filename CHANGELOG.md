@@ -1,5 +1,48 @@
 # Changelog
 
+## [2.3.0] - 2026-04-20
+
+### Added — Track 2: query routing (text → SQL vs RAG)
+
+Questions about structured patient data now bypass the RAG pipeline and
+query the patients table directly. Aggregation questions like "how many
+female patients are on Metformin?" now return instant, accurate answers.
+
+- **Intent classifier** (`backend/rag/intent_classifier.py`)
+  - One llama3.2:3b call classifies every question as SQL / HYBRID / RAG
+  - SQL: structured queries answered from the patients table
+  - HYBRID: SQL to find patients, then RAG scoped to their folders
+  - RAG: existing pipeline, unchanged
+  - Falls back to RAG on any classification error
+
+- **Patient query module** (`backend/rag/patient_query.py`)
+  - LLM outputs a JSON filter spec, not raw SQL — injection-proof by design
+  - Whitelist of allowed columns and aggregation functions
+  - Parameterised SQL built from the validated filter spec
+  - `statement_timeout` and row cap (`PATIENT_QUERY_MAX_ROWS=100`)
+  - Uses GIN indexes on `icd10_codes`, `diagnoses`, `medications`
+  - Result formatting via llama3.2:3b — markdown tables, age calculation
+
+- **Pipeline routing** (`backend/rag/pipeline.py`)
+  - New intent classification step before complexity routing
+  - RAG pipeline extracted into `_run_rag_pipeline()` — shared by RAG and HYBRID
+  - `query_route` field on QueryResult surfaced in SSE done event
+
+- **JSON generation helper** (`backend/models/ollama.py`)
+  - `generate_worker_json()` — Ollama `format=json` for structured outputs
+
+### Configuration (`backend/config.py`)
+
+- `QUERY_ROUTING_ENABLED` — kill switch, set False to always use RAG
+- `PATIENT_QUERY_MAX_ROWS` — cap rows returned (default 100)
+- `PATIENT_QUERY_TIMEOUT_MS` — per-query statement_timeout (default 5000)
+
+### Notes
+
+- Track 3 (patient browser UI) deferred to a future release.
+- The `query_route` field in the SSE done event lets the frontend display
+  a badge or icon showing which path answered the question.
+
 ## [2.2.0] - 2026-04-07
 
 ### Added — Track 1: structured patient extraction layer

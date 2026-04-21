@@ -218,10 +218,11 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 
             # Final event — sends citations and confidence to the UI
             done_event = json.dumps({
-                "type":       "done",
-                "sources":    sources_payload,
-                "confidence": confidence,
-                "model_used": result.model_used,
+                "type":        "done",
+                "sources":     sources_payload,
+                "confidence":  confidence,
+                "model_used":  result.model_used,
+                "query_route": result.query_route,
             })
             yield f"data: {done_event}\n\n"
 

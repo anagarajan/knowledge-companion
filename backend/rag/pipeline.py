@@ -2,12 +2,18 @@
 pipeline.py — Full RAG query pipeline
 
 Orchestrates all intelligence components in order:
+  0. Intent classification       (intent_classifier.py)  — Track 2
   1. HyDE query expansion        (hyde.py)
   2. Hybrid retrieval + re-rank  (retriever.py)
   3. Complexity routing          (models/ollama.py)
   4. Prompt construction
   5. Streaming answer generation (models/ollama.py)
   6. Confidence scoring          (models/ollama.py)
+
+Intent routing (Track 2):
+  SQL    → patient_query.py (bypass RAG entirely)
+  HYBRID → patient_query.py for patient lookup, then scoped RAG
+  RAG    → existing pipeline unchanged
 
 Entry point: Pipeline.query() — called by the FastAPI endpoint.
 Returns a QueryResult with streamed tokens, sources, and confidence.
@@ -17,7 +23,7 @@ import logging
 from collections.abc import Generator
 from dataclasses import dataclass, field
 
-from config import GRAPH_EXTRACTION_ENABLED
+from config import GRAPH_EXTRACTION_ENABLED, QUERY_ROUTING_ENABLED
 from models.ollama import (
     classify_complexity,
     classify_graph_relevance,
@@ -25,6 +31,8 @@ from models.ollama import (
     stream_reasoner,
 )
 from rag.hyde import expand_query, expand_query_multi
+from rag.intent_classifier import classify_intent
+from rag.patient_query import answer_patient_question
 from rag.retriever import Retriever, RetrievalResult
 from rag.vectorstore import VectorStore, SearchResult
 from rag.graph_store import GraphStore
@@ -90,6 +98,7 @@ class QueryResult:
     confidence:   dict                    # {"level": "HIGH"|"MEDIUM"|"LOW", "reason": "..."}
     is_fallback:  bool                    # True if no relevant docs were found
     model_used:   str                     # which LLM was used
+    query_route:  str = "RAG"             # "RAG" | "SQL" | "HYBRID" — Track 2
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
@@ -148,113 +157,23 @@ class Pipeline:
                 model_used="none",
             )
 
-        # ── Step 2: Route complexity first (cheap, fast) ──────────────────────
-        complexity = classify_complexity(question)
-        logger.info(f"Query classified as: {complexity}")
-
-        # ── Step 3: HyDE query expansion ─────────────────────────────────────
-        if complexity == "COMPLEX":
-            query_vector = expand_query_multi(question, n=3)
+        # ── Step 1b: Intent routing (Track 2) ────────────────────────────────
+        # Classify whether the question targets structured patient data (SQL),
+        # needs both structured + document context (HYBRID), or is a normal
+        # document question (RAG). SQL and HYBRID bypass the vector pipeline.
+        if QUERY_ROUTING_ENABLED:
+            intent = classify_intent(question)
         else:
-            _, query_vector = expand_query(question)
-        logger.info(f"HyDE expanded query ({complexity})")
+            intent = "RAG"
 
-        # ── Step 4: Hybrid retrieval + re-ranking ─────────────────────────────
-        retrieval: RetrievalResult = self._retriever.retrieve(
-            question=question,
-            query_vector=query_vector,
-            folders=folders,
-        )
+        if intent == "SQL":
+            return self._handle_sql_query(question)
 
-        # ── Step 4b-d: Graph-augmented retrieval ─────────────────────────────
-        # Three safety layers:
-        #   1. Feature flag (GRAPH_EXTRACTION_ENABLED)
-        #   2. Classification gate (only relational questions)
-        #   3. Try/except (any failure → fall through to normal retrieval)
-        graph_context = ""
-        if self._graph_retriever and retrieval.results:
-            try:
-                if classify_graph_relevance(question):
-                    logger.info("Graph-relevant question — running graph retrieval")
-                    graph_result = self._graph_retriever.retrieve(
-                        question=question,
-                        seed_results=retrieval.results,
-                        folders=folders,
-                    )
-                    if graph_result.is_graph_enhanced:
-                        graph_context = graph_result.graph_context
+        if intent == "HYBRID":
+            return self._handle_hybrid_query(question, history, folders)
 
-                        # Merge graph chunks into retrieval results.
-                        # They enter the existing result list and will be
-                        # subject to the same threshold gate and diversity
-                        # filtering as vector/BM25 results.
-                        if graph_result.graph_chunks:
-                            retrieval = self._merge_graph_results(
-                                retrieval, graph_result.graph_chunks,
-                            )
-                            logger.info(
-                                f"  Merged {len(graph_result.graph_chunks)} "
-                                f"graph chunks into results"
-                            )
-                else:
-                    logger.info("Non-relational question — skipping graph")
-            except Exception as e:
-                logger.warning(f"Graph retrieval failed (non-critical): {e}")
-
-        # ── Step 5: Threshold gate — stop if nothing relevant ─────────────────
-        if retrieval.below_threshold or not retrieval.results:
-            logger.info("Below threshold — returning fallback")
-            return QueryResult(
-                token_stream=_static_stream(FALLBACK_RESPONSE),
-                sources=[],
-                confidence={"level": "LOW", "reason": "No relevant documents found"},
-                is_fallback=True,
-                model_used="none",
-            )
-
-        # ── Step 6: Source diversity — cap chunks per document ────────────────
-        # Prevents one large document from filling all 5 context slots.
-        # Diversity is applied to the ranked top-k; keyword-boosted chunks
-        # (already included by the retriever) are exempt from this cap so they
-        # always reach the LLM even when the same source dominates.
-        diverse_results = _diversify_sources(
-            retrieval.results,
-            retrieval.keyword_chunk_ids,
-            MAX_CHUNKS_PER_SOURCE,
-        )
-
-        # ── Step 7: Score-based confidence (no LLM call — enables true streaming)
-        # Confidence is derived from the re-rank scores already computed.
-        # This removes the post-generation LLM confidence call and allows tokens
-        # to stream to the user in real time instead of after full buffering.
-        confidence = _score_based_confidence(diverse_results)
-
-        # ── Step 8: Build prompt ──────────────────────────────────────────────
-        system_prompt = _build_system_prompt(
-            diverse_results, retrieval.has_conflict, graph_context,
-        )
-        messages = _build_messages(question, history)
-
-        # ── Step 9: Select model and stream answer — tokens flow in real time ──
-        if complexity == "COMPLEX":
-            model_used = "llama3.1:8b"
-            token_stream = stream_reasoner(system_prompt, messages)
-        else:
-            model_used = "llama3.2:3b"
-            token_stream = stream_worker(system_prompt, messages)
-
-        logger.info(f"Streaming answer via {model_used}")
-
-        # ── Step 10: Build source citations ───────────────────────────────────
-        sources = _build_sources(diverse_results)
-
-        return QueryResult(
-            token_stream=token_stream,
-            sources=sources,
-            confidence=confidence,
-            is_fallback=False,
-            model_used=model_used,
-        )
+        # intent == "RAG" — fall through to existing pipeline
+        return self._run_rag_pipeline(question, history, folders, route="RAG")
 
 
     @staticmethod
@@ -293,6 +212,216 @@ class Pipeline:
             best_score=best,
             below_threshold=retrieval.below_threshold,
             keyword_chunk_ids=retrieval.keyword_chunk_ids,
+        )
+
+
+    # ── Track 2: SQL route ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _handle_sql_query(question: str) -> QueryResult:
+        """
+        Pure structured query — answer entirely from the patients table.
+        No vector retrieval, no HyDE, no re-ranking.
+        """
+        try:
+            result, token_stream = answer_patient_question(question)
+            confidence = (
+                {"level": "HIGH", "reason": "Answered from structured patient data"}
+                if result.total_count > 0
+                else {"level": "LOW", "reason": "No patients matched the query"}
+            )
+            return QueryResult(
+                token_stream=token_stream,
+                sources=[],       # SQL queries cite the patients table, not PDFs
+                confidence=confidence,
+                is_fallback=result.total_count == 0,
+                model_used="llama3.2:3b",
+                query_route="SQL",
+            )
+        except Exception as e:
+            logger.error(f"SQL query failed: {e} — falling back to RAG")
+            # Return a helpful message instead of crashing
+            return QueryResult(
+                token_stream=_static_stream(
+                    "I tried to look that up in the patient records but ran into "
+                    "an issue. Try rephrasing your question, or ask about specific "
+                    "document content instead."
+                ),
+                sources=[],
+                confidence={"level": "LOW", "reason": f"SQL query error: {e}"},
+                is_fallback=True,
+                model_used="none",
+                query_route="SQL",
+            )
+
+    def _handle_hybrid_query(
+        self,
+        question: str,
+        history: list[dict],
+        folders: list[str] | None,
+    ) -> QueryResult:
+        """
+        Hybrid: SQL to find matching patients, then RAG scoped to their folders.
+
+        Example: "Compare treatment plans of patients on Metformin"
+          1. SQL finds patient folders where medications contain Metformin
+          2. RAG retrieves document chunks scoped to those folders
+          3. Answer is generated from the document context
+        """
+        try:
+            from rag.patient_query import parse_patient_question, build_patient_query
+            from db.connection import db_conn
+
+            # Parse the question into filters, but we only need folder_path
+            spec = parse_patient_question(question)
+
+            # Build a query that fetches folder_path (not in the LLM's whitelist)
+            conditions: list[str] = []
+            params: list = []
+            sql_parts, sql_params = build_patient_query(spec)
+
+            # Query folder_path directly using the same WHERE clause
+            # Extract WHERE clause from the built query
+            where_start = sql_parts.find("WHERE ")
+            if where_start >= 0:
+                # Strip everything after ORDER BY or LIMIT
+                where_clause = sql_parts[where_start + 6:]
+                for stop in ("ORDER BY", "LIMIT"):
+                    idx = where_clause.find(stop)
+                    if idx >= 0:
+                        where_clause = where_clause[:idx].strip()
+                # Remove the LIMIT param if present in sql_params
+                folder_params = sql_params[:len(sql_params) - (1 if "LIMIT" in sql_parts else 0)]
+            else:
+                where_clause = "TRUE"
+                folder_params = []
+
+            folder_sql = (
+                f"SELECT DISTINCT folder_path FROM patients "
+                f"WHERE {where_clause} LIMIT 50"
+            )
+
+            with db_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(folder_sql, folder_params)
+                    patient_folders = [
+                        row["folder_path"] for row in cur.fetchall()
+                        if row["folder_path"]
+                    ]
+
+            if not patient_folders:
+                logger.info("HYBRID: no patients matched, falling back to RAG")
+                return self._run_rag_pipeline(question, history, folders, route="HYBRID")
+
+            logger.info(
+                f"HYBRID: scoping RAG to {len(patient_folders)} patient folders"
+            )
+
+            return self._run_rag_pipeline(
+                question, history, patient_folders, route="HYBRID",
+            )
+
+        except Exception as e:
+            logger.error(f"HYBRID SQL step failed: {e} — running unscoped RAG")
+            return self._run_rag_pipeline(question, history, folders, route="HYBRID")
+
+    def _run_rag_pipeline(
+        self,
+        question: str,
+        history: list[dict],
+        folders: list[str] | None,
+        route: str = "RAG",
+    ) -> QueryResult:
+        """
+        The existing RAG pipeline extracted into a method so it can be called
+        by both the main query() path and the HYBRID path.
+        """
+        # ── Complexity routing ────────────────────────────────────────────────
+        complexity = classify_complexity(question)
+        logger.info(f"Query classified as: {complexity}")
+
+        # ── HyDE expansion ────────────────────────────────────────────────────
+        if complexity == "COMPLEX":
+            query_vector = expand_query_multi(question, n=3)
+        else:
+            _, query_vector = expand_query(question)
+
+        # ── Hybrid retrieval + re-ranking ─────────────────────────────────────
+        retrieval: RetrievalResult = self._retriever.retrieve(
+            question=question,
+            query_vector=query_vector,
+            folders=folders,
+        )
+
+        # ── Graph-augmented retrieval ─────────────────────────────────────────
+        graph_context = ""
+        if self._graph_retriever and retrieval.results:
+            try:
+                if classify_graph_relevance(question):
+                    logger.info("Graph-relevant question — running graph retrieval")
+                    graph_result = self._graph_retriever.retrieve(
+                        question=question,
+                        seed_results=retrieval.results,
+                        folders=folders,
+                    )
+                    if graph_result.is_graph_enhanced:
+                        graph_context = graph_result.graph_context
+                        if graph_result.graph_chunks:
+                            retrieval = self._merge_graph_results(
+                                retrieval, graph_result.graph_chunks,
+                            )
+                else:
+                    logger.info("Non-relational question — skipping graph")
+            except Exception as e:
+                logger.warning(f"Graph retrieval failed (non-critical): {e}")
+
+        # ── Threshold gate ────────────────────────────────────────────────────
+        if retrieval.below_threshold or not retrieval.results:
+            logger.info("Below threshold — returning fallback")
+            return QueryResult(
+                token_stream=_static_stream(FALLBACK_RESPONSE),
+                sources=[],
+                confidence={"level": "LOW", "reason": "No relevant documents found"},
+                is_fallback=True,
+                model_used="none",
+                query_route=route,
+            )
+
+        # ── Source diversity ──────────────────────────────────────────────────
+        diverse_results = _diversify_sources(
+            retrieval.results,
+            retrieval.keyword_chunk_ids,
+            MAX_CHUNKS_PER_SOURCE,
+        )
+
+        # ── Score-based confidence ────────────────────────────────────────────
+        confidence = _score_based_confidence(diverse_results)
+
+        # ── Build prompt ──────────────────────────────────────────────────────
+        system_prompt = _build_system_prompt(
+            diverse_results, retrieval.has_conflict, graph_context,
+        )
+        messages = _build_messages(question, history)
+
+        # ── Stream answer ─────────────────────────────────────────────────────
+        if complexity == "COMPLEX":
+            model_used = "llama3.1:8b"
+            token_stream = stream_reasoner(system_prompt, messages)
+        else:
+            model_used = "llama3.2:3b"
+            token_stream = stream_worker(system_prompt, messages)
+
+        logger.info(f"Streaming answer via {model_used}")
+
+        sources = _build_sources(diverse_results)
+
+        return QueryResult(
+            token_stream=token_stream,
+            sources=sources,
+            confidence=confidence,
+            is_fallback=False,
+            model_used=model_used,
+            query_route=route,
         )
 
 
