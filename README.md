@@ -184,10 +184,11 @@ logs/ollama.log     — Ollama AI runtime
 
 ## How It Works
 
-1. **Ingest** — PDFs are split into chunks, embedded as vectors, and stored in PostgreSQL. A knowledge graph extracts entities and relationships for structural queries.
-2. **Ask** — Your question is expanded via AI, searched using semantic search, keyword search, and graph traversal, then re-ranked.
-3. **Answer** — The best matching chunks are sent to a local LLM which answers using only your documents.
-4. **Cite** — Every answer shows which document and page it came from.
+1. **Ingest** — PDFs are split into chunks, embedded as vectors, and stored in PostgreSQL. A knowledge graph extracts entities and relationships. Patient folders get structured extraction (name, DOB, diagnoses, medications, etc.) into a queryable table.
+2. **Route** — Each question is classified as **SQL** (structured patient queries like "how many patients over 65?"), **HYBRID** (patient lookup + document context), or **RAG** (open-ended document questions). This ensures each question type gets the fastest, most accurate answer path.
+3. **Ask** — RAG questions are expanded via AI, searched using semantic search, keyword search, and graph traversal, then re-ranked. SQL questions are converted into safe, parameterised database queries.
+4. **Answer** — RAG answers come from document chunks sent to a local LLM. SQL answers come directly from the structured patients table, formatted by the LLM.
+5. **Cite** — Every answer shows which document and page it came from.
 
 All answers come only from your documents. The system is designed to say "I could not find this" rather than guess.
 
