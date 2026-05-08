@@ -10,7 +10,7 @@
  * When open: renders at the width passed from App (drag-resizable).
  */
 
-import { Trash2, Plus, FolderOpen, MessageSquare, Menu, Network } from 'lucide-react'
+import { Trash2, Plus, FolderOpen, MessageSquare, Menu, Network, Users } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Session } from '../types'
 
@@ -21,13 +21,13 @@ interface Props {
   selectedFolders:  string[]
   isOpen:           boolean
   width:            number
-  activeView:       'chat' | 'graph'
+  activeView:       'chat' | 'graph' | 'patients'
   onNewChat:        () => void
   onSelectSession:  (id: string) => void
   onDeleteSession:  (id: string) => void
   onFolderToggle:   (folder: string, checked: boolean) => void
   onToggle:         () => void
-  onViewChange:     (view: 'chat' | 'graph') => void
+  onViewChange:     (view: 'chat' | 'graph' | 'patients') => void
 }
 
 export default function Sidebar({
@@ -119,6 +119,18 @@ export default function Sidebar({
         >
           <Network size={12} />
           Graph
+        </button>
+        <button
+          onClick={() => onViewChange('patients')}
+          className={clsx(
+            'flex items-center gap-1.5 flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+            activeView === 'patients'
+              ? 'bg-raised text-black'
+              : 'text-muted hover:text-black hover:bg-raised/50',
+          )}
+        >
+          <Users size={12} />
+          Patients
         </button>
       </div>
 

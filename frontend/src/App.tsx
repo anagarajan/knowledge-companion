@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
 import EntityBrowser from './components/EntityBrowser'
+import PatientBrowser from './components/PatientBrowser'
 import type { Session } from './types'
 import * as api from './lib/api'
 
@@ -28,7 +29,7 @@ export default function App() {
   const [selectedFolders,  setSelectedFolders]  = useState<string[]>([])
   const [sidebarOpen,      setSidebarOpen]      = useState(true)
   const [sidebarWidth,     setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
-  const [activeView,       setActiveView]       = useState<'chat' | 'graph'>('chat')
+  const [activeView,       setActiveView]       = useState<'chat' | 'graph' | 'patients'>('chat')
   const [loading,          setLoading]          = useState(true)
 
   // ── Bootstrap on first load ────────────────────────────────────────────────
@@ -180,7 +181,9 @@ export default function App() {
       )}
 
       <main className="flex-1 overflow-hidden">
-        {activeView === 'graph' ? (
+        {activeView === 'patients' ? (
+          <PatientBrowser />
+        ) : activeView === 'graph' ? (
           <EntityBrowser />
         ) : activeId ? (
           <ChatArea

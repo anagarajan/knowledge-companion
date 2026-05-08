@@ -327,6 +327,44 @@ def list_folders() -> list[str]:
 # Use during ingestion to spot-check records and find systemic gaps.
 
 
+@app.get("/api/patients")
+def list_patients_endpoint(
+    name: str | None = None,
+    gender: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    medication: str | None = None,
+    icd10: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """
+    List patients with optional filters.
+
+    Query params:
+      name       — partial name search (case-insensitive)
+      gender     — "Male" or "Female"
+      city       — exact city (case-insensitive)
+      state      — exact state (case-insensitive)
+      medication — medication name that must appear in the medications array
+      icd10      — ICD-10 code that must appear in icd10_codes array
+      limit      — page size (default 50, max 200)
+      offset     — pagination offset
+    """
+    from rag.patient_store import list_patients
+    limit = min(limit, 200)
+    return list_patients(
+        name_search=name or None,
+        gender=gender or None,
+        city=city or None,
+        state=state or None,
+        medications_contain=[medication] if medication else None,
+        icd10_contain=[icd10] if icd10 else None,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @app.get("/api/patients/stats")
 def patients_stats() -> dict:
     """

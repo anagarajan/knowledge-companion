@@ -170,6 +170,64 @@ def get_patient(patient_id: str) -> dict | None:
             return patient
 
 
+def list_patients(
+    name_search: str | None = None,
+    gender: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    medications_contain: list[str] | None = None,
+    icd10_contain: list[str] | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Return a paginated, filtered list of patients plus a total count."""
+    import json as _json
+
+    conditions: list[str] = []
+    params: list = []
+
+    if name_search:
+        conditions.append("full_name ILIKE %s")
+        params.append(f"%{name_search}%")
+    if gender:
+        conditions.append("gender ILIKE %s")
+        params.append(gender)
+    if city:
+        conditions.append("city ILIKE %s")
+        params.append(city)
+    if state:
+        conditions.append("state ILIKE %s")
+        params.append(state)
+    if medications_contain:
+        conditions.append("medications @> %s::jsonb")
+        params.append(_json.dumps(medications_contain))
+    if icd10_contain:
+        conditions.append("icd10_codes @> %s::jsonb")
+        params.append(_json.dumps(icd10_contain))
+
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS n FROM patients {where}", params)
+            total = cur.fetchone()["n"]
+
+            cur.execute(
+                f"""
+                SELECT patient_id, full_name, date_of_birth, gender,
+                       city, state, insurance_provider, insurance_id,
+                       icd10_codes, diagnoses, medications, last_extracted_at
+                FROM patients {where}
+                ORDER BY full_name
+                LIMIT %s OFFSET %s
+                """,
+                [*params, limit, offset],
+            )
+            patients = [dict(r) for r in cur.fetchall()]
+
+    return {"patients": patients, "total": total}
+
+
 def patient_stats() -> dict:
     """High-level extraction quality stats for the validation API."""
     with db_conn() as conn:

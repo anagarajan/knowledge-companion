@@ -23,7 +23,7 @@ interface Props {
   onDeleteSession: () => void
 }
 
-export default function ChatArea({ sessionId, folders, onTitleUpdate, onDeleteSession }: Props) {
+export default function ChatArea({ sessionId, folders, onTitleUpdate }: Props) {
   const { messages, isStreaming, error, sendMessage, setFolders, clearMessages } = useChat(sessionId)
   const [input, setInput] = useState('')
   const bottomRef   = useRef<HTMLDivElement>(null)

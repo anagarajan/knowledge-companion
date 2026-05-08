@@ -3,7 +3,7 @@
  * Streaming (SSE) is handled separately in hooks/useChat.ts.
  */
 
-import type { ApiMessage, Session, GraphEntity, GraphRelationship, GraphStats } from '../types'
+import type { ApiMessage, Session, GraphEntity, GraphRelationship, GraphStats, PatientListResponse, PatientDetail, PatientStats } from '../types'
 
 const BASE = '/api'
 
@@ -94,4 +94,37 @@ export function getRelatedEntities(
 
 export function getGraphStats(): Promise<GraphStats> {
   return request<GraphStats>('/graph/stats')
+}
+
+// ── Patients (Track 3) ────────────────────────────────────────────────────────
+
+export function listPatients(params: {
+  name?: string
+  gender?: string
+  city?: string
+  state?: string
+  medication?: string
+  icd10?: string
+  limit?: number
+  offset?: number
+} = {}): Promise<PatientListResponse> {
+  const query = new URLSearchParams()
+  if (params.name)       query.set('name', params.name)
+  if (params.gender)     query.set('gender', params.gender)
+  if (params.city)       query.set('city', params.city)
+  if (params.state)      query.set('state', params.state)
+  if (params.medication) query.set('medication', params.medication)
+  if (params.icd10)      query.set('icd10', params.icd10)
+  if (params.limit)      query.set('limit', String(params.limit))
+  if (params.offset)     query.set('offset', String(params.offset))
+  const qs = query.toString()
+  return request<PatientListResponse>(`/patients${qs ? `?${qs}` : ''}`)
+}
+
+export function getPatient(patientId: string): Promise<PatientDetail> {
+  return request<PatientDetail>(`/patients/${patientId}`)
+}
+
+export function getPatientStats(): Promise<PatientStats> {
+  return request<PatientStats>('/patients/stats')
 }

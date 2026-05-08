@@ -68,6 +68,46 @@ export interface GraphStats {
   relationships_by_type:        Record<string, number>
 }
 
+// ── Patient types (Track 3) ────────────────────────────────────────────────────
+
+export interface PatientSummary {
+  patient_id:         string
+  full_name:          string | null
+  date_of_birth:      string | null
+  gender:             string | null
+  city:               string | null
+  state:              string | null
+  insurance_provider: string | null
+  insurance_id:       string | null
+  icd10_codes:        string[]
+  diagnoses:          string[]
+  medications:        string[]
+  last_extracted_at:  string | null
+}
+
+export interface PatientProvenance {
+  field_name:   string
+  field_value:  string
+  source_file:  string
+  source_page:  number
+  confidence:   number
+}
+
+export interface PatientDetail extends PatientSummary {
+  medical_history: string | null
+  provenance:      PatientProvenance[]
+}
+
+export interface PatientListResponse {
+  patients: PatientSummary[]
+  total:    number
+}
+
+export interface PatientStats {
+  total_patients:    number
+  field_completeness: Record<string, number>
+}
+
 // ── Local UI types ─────────────────────────────────────────────────────────────
 
 /** Message as held in React state — before and after it's persisted. */
